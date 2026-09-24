@@ -470,15 +470,38 @@ function renderTeamResult(s, team) {
     })
     .join('');
 
+  const teamSeatsOf = (t) => (t === 'A' ? [1, 2, 3, 4, 5] : [6, 7, 8, 9, 10]);
+  const teamBallots = (s.outcome.ballots || []).filter((b) => teamSeatsOf(team).includes(b.voter));
+  const voteRows = teamBallots
+    .map((b) => {
+      const targetIsSpy = b.target === s.outcome.A.spy || b.target === s.outcome.B.spy;
+      const tag = b.bySpy
+        ? `<span class="vote-tag spy">内鬼票 · 计入 ${b.countsIn} 队</span>`
+        : '<span class="vote-tag ok">平民票</span>';
+      return `<div class="vote-row${b.bySpy ? ' by-spy' : ''}">
+        <span class="vote-from">${b.voter} 号 ${esc(b.voterName)}${b.bySpy ? ' 🔪' : ''}</span>
+        <span class="vote-arrow">→</span>
+        <span class="vote-to">${b.target} 号 ${esc(b.targetName)}${targetIsSpy ? ' 🔪' : ''}</span>
+        ${tag}
+      </div>`;
+    })
+    .join('');
+
   return `
     <div class="verdict ${verdict.cls}">
       <div class="verdict-head">
-        <div class="verdict-title">${team} 队 · ${verdict.title}</div>
+        <div class="verdict-title">${team} 队 · ${verdict.title}${
+          team === s.team ? '<span class="mine-tag">你的队</span>' : ''
+        }</div>
         <div class="muted">计入票数 ${o.countedVotes}</div>
       </div>
       <div class="conclusion">${conclusionText(s, o)}</div>
       ${verdict.desc ? `<p class="muted" style="margin-top:6px">${verdict.desc}</p>` : ''}
       <div class="tally">${rows}</div>
+      <div class="vote-detail">
+        <div class="vote-detail-head">本队投票情况</div>
+        ${voteRows || '<p class="muted">本队没有人投票</p>'}
+      </div>
     </div>`;
 }
 
@@ -509,11 +532,13 @@ function renderResult(s) {
   return `
     <div class="phase-title">
       <h2>第 ${s.round} 轮 · 结算</h2>
-      <p class="muted">每队票数 = 本队平民的 4 票 + 对面内鬼猜过来的 1 票。</p>
+      <p class="muted">左边 A 队、右边 B 队，各算各的。每队票数 = 本队平民的 4 票 + 对面内鬼猜过来的 1 票。</p>
     </div>
-    ${renderTeamResult(s, 'A')}
-    ${renderTeamResult(s, 'B')}
-    ${renderBallots(s)}
+    <div class="result-columns">
+      ${renderTeamResult(s, 'A')}
+      ${renderTeamResult(s, 'B')}
+    </div>
+    ${renderSpyGuesses(s)}
     ${
       s.isHost
         ? `<div class="host-panel">
@@ -525,39 +550,6 @@ function renderResult(s) {
            </div>`
         : `<div class="status-line"><span class="spinner"></span>等待房主开始新一轮</div>`
     }`;
-}
-
-function renderBallots(s) {
-  const ballots = s.outcome.ballots || [];
-  const spyA = s.outcome.A.spy;
-  const spyB = s.outcome.B.spy;
-
-  const rows = ballots
-    .map((b) => {
-      const cls = ['ballot-row'];
-      if (b.bySpy) cls.push('by-spy');
-      const targetIsSpy = b.target === spyA || b.target === spyB;
-      const flag = b.bySpy
-        ? `<span class="ballot-tag spy">内鬼票 · 计入 ${b.countsIn} 队票数</span>`
-        : '<span class="ballot-tag ok">平民票</span>';
-      return `<div class="${cls.join(' ')}">
-        <div class="ballot-who">${b.voter} 号 ${esc(b.voterName)}${b.bySpy ? ' 🔪' : ''}</div>
-        <div class="ballot-arrow">→</div>
-        <div class="ballot-target">${b.target} 号 ${esc(b.targetName)}${targetIsSpy ? ' 🔪' : ''}</div>
-        <div class="ballot-flag">${flag}</div>
-      </div>`;
-    })
-    .join('');
-
-  return `
-    <div class="card ballots">
-      <h3>每个人投给了谁</h3>
-      <div class="ballot-list">${rows || '<p class="muted">没有人投票</p>'}</div>
-      ${renderSpyGuesses(s)}
-      <p class="muted" style="margin-top:12px">
-        带 🔪 的是内鬼。内鬼不能投本队，那一票改成猜对面队伍的内鬼，**并且计入对面队伍的票数**。
-      </p>
-    </div>`;
 }
 
 function renderSpyGuesses(s) {
@@ -579,10 +571,15 @@ function renderSpyGuesses(s) {
   };
 
   return `
-    <div class="spy-guesses">
-      <div class="hist-head">内鬼互猜</div>
-      ${line(spyA, spyB, 'A')}
-      ${line(spyB, spyA, 'B')}
+    <div class="card spy-guesses-card">
+      <h3>内鬼互猜</h3>
+      <div style="margin-top:10px">
+        ${line(spyA, spyB, 'A')}
+        ${line(spyB, spyA, 'B')}
+      </div>
+      <p class="muted" style="margin-top:12px">
+        带 🔪 的是内鬼。内鬼不能投本队，那一票改成猜对面队伍的内鬼，并且<b>计入对面队伍的票数</b>。
+      </p>
     </div>`;
 }
 
@@ -847,7 +844,15 @@ document.addEventListener('click', (ev) => {
       break;
 
     case 'clear-seat':
-      if (confirm(`把 ${seat} 号座位清空？`)) act('clear_seat', { seat });
+      if (
+        confirm(
+          snapshot.phase === 'reveal'
+            ? `把 ${seat} 号座位清空？\n\n现在是「看身份」阶段，身份已经发下去了，清空会让本轮作废、所有人退回大厅重新开局。\n\n如果只是掉线，建议先等一下，对方刷新页面就能回到原座位。`
+            : `把 ${seat} 号座位清空？`,
+        )
+      ) {
+        act('clear_seat', { seat });
+      }
       break;
 
     case 'back-lobby':
@@ -855,7 +860,13 @@ document.addEventListener('click', (ev) => {
       break;
 
     case 'leave':
-      if (confirm('确定退出房间？')) {
+      if (
+        confirm(
+          snapshot.phase === 'reveal'
+            ? '确定退出房间？\n\n现在是「看身份」阶段，你退出会让本轮作废、所有人退回大厅重新开局。\n\n如果只是页面卡了，直接刷新就好，座位和身份都还在。'
+            : '确定退出房间？',
+        )
+      ) {
         act('leave').then((ok) => {
           // 只有服务端真的释放了座位，才清掉本地会话
           if (!ok) return;
