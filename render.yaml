@@ -1,0 +1,12 @@
+# Render 蓝图：把仓库连到 Render 后可以直接一键创建这个服务
+services:
+  - type: web
+    name: lol-spy
+    runtime: node
+    plan: free
+    buildCommand: "echo no dependencies to install"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
