@@ -312,7 +312,7 @@ function identityCard(s) {
         <div class="role-word ${isSpy ? 'spy' : 'villager'}">${isSpy ? '你是内鬼' : '你是平民'}</div>
         <div class="role-hint">${
           isSpy
-            ? '照常参与投票，但你的那一票不计入任何人的票数。别露馅。'
+            ? '你不能投本队，要去对面队伍里猜谁是对面的内鬼，那一票计入对面队伍的票数。别露馅。'
             : '在你们队里找出那个内鬼。'
         }</div>
         <button class="small ghost" data-act="hide-role">隐藏身份</button>
@@ -360,43 +360,74 @@ function renderReveal(s) {
 }
 
 function renderVoting(s) {
-  const me = s.seats.find((seat) => seat.isMe);
   const targets = s.voteTargets;
   const voted = s.myVoteTarget != null;
   const waiting = s.occupiedCount - s.votesSubmittedCount;
   const targetName = voted ? s.seats[s.myVoteTarget - 1] : null;
 
+  let ballot;
+  if (s.isSpyBallot) {
+    ballot = voted
+      ? `
+      <div class="card spy-note">
+        <div class="spy-note-title">你的猜测已提交</div>
+        <p class="muted">你猜 <b>${targetName ? `${targetName.seat} 号 ${esc(targetName.name)}` : ''}</b>
+        是对方队伍的内鬼。提交后不能修改，等其他人投完就会自动结算。</p>
+        <div class="status-line">已投 ${s.votesSubmittedCount}/${s.occupiedCount}</div>
+      </div>`
+      : `
+      <div class="card spy-note">
+        <div class="spy-note-title">你是内鬼 · 去猜对面谁是内鬼</div>
+        <p class="muted">你不能投本队的人，改成在对面这 5 个人里挑一个你认为是内鬼的。
+        这一票会<b>计入对面队伍的票数</b>——猜中就是给对面内鬼加一票。结算时还会公布你猜得准不准。</p>
+        <div class="menu">
+          ${targets
+            .map(
+              (t) => `<button data-act="vote" data-seat="${t.seat}">${t.seat} 号 · ${esc(t.name)}</button>`,
+            )
+            .join('')}
+        </div>
+      </div>`;
+  } else if (voted) {
+    ballot = `
+      <div class="card">
+        <div class="status-line" style="margin-top:0">
+          <span class="spinner"></span>你已投给 <b>${esc(targetName ? targetName.name : '')}</b> · 等待其他人（已投 ${s.votesSubmittedCount}/${s.occupiedCount}）
+        </div>
+        <p class="muted" style="margin-top:10px;text-align:center">投票提交后不能修改。</p>
+      </div>`;
+  } else {
+    ballot = `
+      <div class="card">
+        <div class="muted" style="margin-bottom:4px">本队候选人</div>
+        <div class="menu">
+          ${targets
+            .map(
+              (t) => `<button data-act="vote" data-seat="${t.seat}">${t.seat} 号 · ${esc(t.name)}</button>`,
+            )
+            .join('')}
+        </div>
+      </div>`;
+  }
+
   return `
     <div class="phase-title">
-      <h2>第 ${s.round} 轮 · 队内投票</h2>
-      <p class="muted">你是 ${s.team} 队，从本队里投出你认为的内鬼。所有人投完才会公布票数。</p>
+      <h2>第 ${s.round} 轮 · ${s.isSpyBallot ? '猜对面内鬼' : '队内投票'}</h2>
+      <p class="muted">${
+        s.isSpyBallot
+          ? `你是内鬼，去 ${s.team === 'A' ? 'B' : 'A'} 队的 5 个人里猜谁是对面的内鬼。所有人投完才会公布结果。`
+          : `你是 ${s.team} 队，从本队里投出你认为的内鬼。所有人投完才会公布票数。`
+      }</p>
     </div>
+    ${ballot}
     ${
-      voted
-        ? `<div class="card">
-             <div class="status-line" style="margin-top:0">
-               <span class="spinner"></span>你已投给 <b>${esc(targetName ? targetName.name : '')}</b> · 等待其他人（已投 ${s.votesSubmittedCount}/${s.occupiedCount}）
-             </div>
-             <p class="muted" style="margin-top:10px;text-align:center">投票提交后不能修改。</p>
-           </div>`
-        : `<div class="card">
-             <div class="muted" style="margin-bottom:4px">本队候选人</div>
-             <div class="menu">
-               ${targets
-                 .map(
-                   (t) =>
-                     `<button data-act="vote" data-seat="${t.seat}">${t.seat} 号 · ${esc(t.name)}</button>`,
-                 )
-                 .join('')}
-             </div>
-           </div>`
+      s.isSpyBallot
+        ? ''
+        : `<details ${ui.detailOpen ? 'open' : ''} data-act="toggle-detail">
+             <summary>查看我的身份</summary>
+             <p class="muted" style="margin-top:8px">你是${s.myRole === 'spy' ? '内鬼' : '平民'}（${s.team} 队 ${s.seat} 号）。</p>
+           </details>`
     }
-    <details ${ui.detailOpen ? 'open' : ''} data-act="toggle-detail">
-      <summary>查看我的身份</summary>
-      <p class="muted" style="margin-top:8px">
-        你是 ${s.myRole === 'spy' ? '内鬼' : '平民'}（${s.team} 队 ${s.seat} 号）。${s.myRole === 'spy' ? '你的票会作废，但别让人看出来。' : ''}
-      </p>
-    </details>
     ${
       s.isHost
         ? `<div class="host-panel">
@@ -416,7 +447,7 @@ const VERDICTS = {
   caught: { title: '抓到内鬼 · 平民胜出', cls: 'win-villagers', desc: '唯一最高票正好是内鬼。' },
   tie: { title: '平票 · 内鬼胜出', cls: 'win-spy', desc: '出现并列最高票，按规则内鬼胜出。' },
   wrong_person: { title: '投错人 · 内鬼胜出', cls: 'win-spy', desc: '最高票是一位平民，内鬼溜了。' },
-  no_votes: { title: '无人投票 · 内鬼胜出', cls: 'win-spy', desc: '这一队没有任何有效票。' },
+  no_votes: { title: '无人投票 · 内鬼胜出', cls: 'win-spy', desc: '这一队一张票都没有。' },
 };
 
 function renderTeamResult(s, team) {
@@ -439,49 +470,50 @@ function renderTeamResult(s, team) {
     })
     .join('');
 
-  const voidVote = o.detail.find((d) => !d.counted);
-
   return `
     <div class="verdict ${verdict.cls}">
       <div class="verdict-head">
         <div class="verdict-title">${team} 队 · ${verdict.title}</div>
-        <div class="muted">有效票 ${o.countedVotes} 张</div>
+        <div class="muted">计入票数 ${o.countedVotes}</div>
       </div>
-      <div class="spy-line">内鬼是 <span class="spy-name">${
-        o.spy
-      } 号 ${esc((s.seats[o.spy - 1] || {}).name || '')}</span>${verdict.desc ? ` · ${verdict.desc}` : ''}</div>
+      <div class="conclusion">${conclusionText(s, o)}</div>
+      ${verdict.desc ? `<p class="muted" style="margin-top:6px">${verdict.desc}</p>` : ''}
       <div class="tally">${rows}</div>
-      ${
-        voidVote
-          ? `<p class="muted" style="margin-top:10px">内鬼那票已作废（${voidVote.voter} 号投给 ${voidVote.target} 号，不计入）。</p>`
-          : ''
-      }
     </div>`;
 }
 
-function renderResult(s) {
-  const allVotes = [...s.outcome.A.detail, ...s.outcome.B.detail].sort((a, b) => a.voter - b.voter);
-  const detailList = allVotes
-    .map((d) => {
-      const from = s.seats[d.voter - 1];
-      const to = s.seats[d.target - 1];
-      return `<li>${d.voter} 号 <b>${esc(from ? from.name : '')}</b> → ${d.target} 号 <b>${esc(
-        to ? to.name : '',
-      )}</b>${d.counted ? '' : ' <span class="void-tag">（内鬼票，作废）</span>'}</li>`;
-    })
-    .join('');
+/** 一句话说清：最高票是谁、他是不是内鬼。 */
+function conclusionText(s, o) {
+  const who = (seat) => {
+    const occupied = s.seats[seat - 1];
+    const name = occupied && occupied.name ? ` ${esc(occupied.name)}` : '';
+    return `${seat} 号${name}`;
+  };
+  const spy = `<span class="spy-name">${who(o.spy)}</span>`;
 
+  if (o.reason === 'caught') {
+    return `最高票 <b>${who(o.leaders[0])}</b>（${o.topCount} 票），<b class="ok-text">正是内鬼</b> ✅`;
+  }
+  if (o.reason === 'tie') {
+    const names = o.leaders.map(who).join('、');
+    const count = o.topCount > 0 ? `各 ${o.topCount} 票` : '都是 0 票';
+    return `最高票并列 <b>${names}</b>（${count}），平票判不出结论；内鬼是 ${spy}`;
+  }
+  if (o.reason === 'no_votes') {
+    return `这一队一张票都没有；内鬼是 ${spy}`;
+  }
+  return `最高票 <b>${who(o.leaders[0])}</b>（${o.topCount} 票），<b class="bad-text">是平民</b>；内鬼其实是 ${spy}`;
+}
+
+function renderResult(s) {
   return `
     <div class="phase-title">
       <h2>第 ${s.round} 轮 · 结算</h2>
-      <p class="muted">票数只统计有效票，内鬼自己那一票不算。</p>
+      <p class="muted">每队票数 = 本队平民的 4 票 + 对面内鬼猜过来的 1 票。</p>
     </div>
     ${renderTeamResult(s, 'A')}
     ${renderTeamResult(s, 'B')}
-    <details>
-      <summary>查看投票明细</summary>
-      <ul class="detail-list">${detailList || '<li>没有人投票</li>'}</ul>
-    </details>
+    ${renderBallots(s)}
     ${
       s.isHost
         ? `<div class="host-panel">
@@ -495,6 +527,99 @@ function renderResult(s) {
     }`;
 }
 
+function renderBallots(s) {
+  const ballots = s.outcome.ballots || [];
+  const spyA = s.outcome.A.spy;
+  const spyB = s.outcome.B.spy;
+
+  const rows = ballots
+    .map((b) => {
+      const cls = ['ballot-row'];
+      if (b.bySpy) cls.push('by-spy');
+      const targetIsSpy = b.target === spyA || b.target === spyB;
+      const flag = b.bySpy
+        ? `<span class="ballot-tag spy">内鬼票 · 计入 ${b.countsIn} 队票数</span>`
+        : '<span class="ballot-tag ok">平民票</span>';
+      return `<div class="${cls.join(' ')}">
+        <div class="ballot-who">${b.voter} 号 ${esc(b.voterName)}${b.bySpy ? ' 🔪' : ''}</div>
+        <div class="ballot-arrow">→</div>
+        <div class="ballot-target">${b.target} 号 ${esc(b.targetName)}${targetIsSpy ? ' 🔪' : ''}</div>
+        <div class="ballot-flag">${flag}</div>
+      </div>`;
+    })
+    .join('');
+
+  return `
+    <div class="card ballots">
+      <h3>每个人投给了谁</h3>
+      <div class="ballot-list">${rows || '<p class="muted">没有人投票</p>'}</div>
+      ${renderSpyGuesses(s)}
+      <p class="muted" style="margin-top:12px">
+        带 🔪 的是内鬼。内鬼不能投本队，那一票改成猜对面队伍的内鬼，**并且计入对面队伍的票数**。
+      </p>
+    </div>`;
+}
+
+function renderSpyGuesses(s) {
+  const ballots = s.outcome.ballots || [];
+  const spyA = s.outcome.A.spy;
+  const spyB = s.outcome.B.spy;
+
+  const line = (mySeat, oppSeat, myTeam) => {
+    const guess = ballots.find((b) => b.voter === mySeat);
+    if (!guess) return '';
+    const hit = guess.target === oppSeat;
+    return `<div class="hist-line">
+      <span class="hist-team t${myTeam.toLowerCase()}">${myTeam} 队内鬼</span>
+      <span>${mySeat} 号 ${esc(guess.voterName)} 猜 ${guess.target} 号 ${esc(guess.targetName)}</span>
+      <span class="hist-verdict ${hit ? 'win' : 'lose'}">${
+        hit ? '猜中了对方内鬼 🎯' : `猜错了（对面是 ${oppSeat} 号）`
+      }</span>
+    </div>`;
+  };
+
+  return `
+    <div class="spy-guesses">
+      <div class="hist-head">内鬼互猜</div>
+      ${line(spyA, spyB, 'A')}
+      ${line(spyB, spyA, 'B')}
+    </div>`;
+}
+
+function renderHistory(s) {
+  const history = s.history || [];
+  if (!history.length) return '';
+
+  const rounds = history
+    .slice()
+    .reverse()
+    .map((h) => {
+      const line = (team) => {
+        const o = h[team];
+        const verdict = VERDICTS[o.reason] || VERDICTS.wrong_person;
+        const win = verdict.cls === 'win-villagers';
+        return `<div class="hist-line">
+          <span class="hist-team t${team.toLowerCase()}">${team} 队</span>
+          <span>内鬼 <b class="spy-name">${o.spy.seat} 号 ${esc(o.spy.name)}</b></span>
+          <span class="hist-verdict ${win ? 'win' : 'lose'}">${verdict.title}</span>
+          <span class="muted">计入 ${o.countedVotes} 票</span>
+        </div>`;
+      };
+      return `<div class="hist-round">
+        <div class="hist-head">第 ${h.round} 轮</div>
+        ${line('A')}
+        ${line('B')}
+      </div>`;
+    })
+    .join('');
+
+  return `
+    <details class="history">
+      <summary>历史战绩（共 ${history.length} 轮，最近的在最上面）</summary>
+      <div class="hist-body">${rounds}</div>
+    </details>`;
+}
+
 function renderRoom(s) {
   let body;
   if (s.phase === 'lobby') body = renderLobby(s);
@@ -505,6 +630,7 @@ function renderRoom(s) {
   return `
     ${renderTopbar(s)}
     ${body}
+    ${renderHistory(s)}
     <div class="row" style="margin-top:20px;justify-content:center">
       <button class="small ghost" data-act="leave">退出房间</button>
     </div>

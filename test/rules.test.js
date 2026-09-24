@@ -27,7 +27,7 @@ async function call(path, body) {
 
 /* ------------------------- 计票规则 ------------------------- */
 
-test('内鬼被唯一最高票投出时平民胜出，且内鬼那一票作废', () => {
+test('本队内鬼那一票不计入本队（他投的是对面队伍）', () => {
   const o = buildOutcome({
     team: 'A',
     spy: 3,
@@ -36,9 +36,35 @@ test('内鬼被唯一最高票投出时平民胜出，且内鬼那一票作废',
   assert.equal(o.verdict, 'villagers');
   assert.equal(o.reason, 'caught');
   assert.equal(o.counts[3], 4);
-  assert.equal(o.counts[1], 0, '内鬼投出去的那一票不该计入 1 号');
-  assert.equal(o.countedVotes, 4, '5 人里内鬼那一票作废，只剩 4 张有效票');
-  assert.equal(o.detail.find((d) => d.voter === 3).counted, false);
+  assert.equal(o.counts[1], 0, '内鬼就算硬投本队，那一票也不算');
+  assert.equal(o.countedVotes, 4);
+});
+
+test('对面内鬼猜过来的那一票计入本队，一队共 5 票', () => {
+  const o = buildOutcome({
+    team: 'A',
+    spy: 3,
+    // 3 号是 A 队内鬼（去猜 8 号）；8 号是 B 队内鬼，猜 3 号
+    votes: { 1: 3, 2: 3, 4: 3, 5: 3, 3: 8, 8: 3 },
+  });
+  assert.equal(o.counts[3], 5, 'A 队平民 4 票 + B 队内鬼猜过来 1 票');
+  assert.equal(o.countedVotes, 5);
+  assert.equal(o.verdict, 'villagers');
+  assert.equal(o.reason, 'caught');
+});
+
+test('对面内鬼那一票能打破平票，把内鬼顶成唯一最高票', () => {
+  const o = buildOutcome({
+    team: 'A',
+    spy: 3,
+    // A 队平民 2:2 平票；B 队内鬼正好猜中 3 号，于是 3 号变成唯一最高票
+    votes: { 1: 3, 2: 3, 4: 5, 5: 5, 3: 8, 8: 3 },
+  });
+  assert.equal(o.counts[3], 3, '本队 2 票 + 对面内鬼 1 票');
+  assert.equal(o.counts[5], 2);
+  assert.equal(o.topCount, 3);
+  assert.deepEqual(o.leaders, [3]);
+  assert.equal(o.reason, 'caught');
 });
 
 test('平票时内鬼胜出', () => {
@@ -78,6 +104,18 @@ test('B 队计票与 A 队一致', () => {
   assert.equal(o.verdict, 'villagers');
   assert.equal(o.counts[7], 4);
   assert.equal(o.counts[6], 0);
+});
+
+test('内鬼把票打到对面队伍时，本队计票完全不受影响', () => {
+  const o = buildOutcome({
+    team: 'A',
+    spy: 3,
+    votes: { 1: 3, 2: 3, 3: 8, 4: 3, 5: 3 }, // 3 号是内鬼，票打向对面队伍的 8 号
+  });
+  assert.equal(o.verdict, 'villagers');
+  assert.equal(o.counts[3], 4);
+  assert.equal(o.countedVotes, 4);
+  assert.equal(o.detail.length, 4, '跨队的内鬼票不进本队投票明细');
 });
 
 test('随机抽内鬼：每队各一名且不越界', () => {
@@ -156,12 +194,46 @@ test('完整一局：身份只下发本人、队内投票、结算、开新一�
   assert.equal(midVote.data.state.voteTargets.length, 4, '本队除自己外应有 4 个候选人');
   assert.equal(midVote.data.state.outcome, null, '投票过程中不能泄露票数');
 
-  for (const player of players) {
+  // 内鬼不能投本队，要去对面 5 个人里猜谁是对面的内鬼
+  const spyPlayers = players.filter((p) => p.seat === spies.A || p.seat === spies.B);
+  const villagerPlayers = players.filter((p) => p.seat !== spies.A && p.seat !== spies.B);
+  assert.equal(spyPlayers.length, 2);
+  for (const player of spyPlayers) {
+    const myTeam = player.seat <= 5 ? 'A' : 'B';
+    const ownTeamMate = (myTeam === 'A' ? [1, 2, 3, 4, 5] : [6, 7, 8, 9, 10]).find(
+      (s) => s !== player.seat,
+    );
+    const rejected = await call('/api/action', {
+      token: player.token,
+      action: 'vote',
+      target: ownTeamMate,
+    });
+    assert.equal(rejected.status, 400, '内鬼不能投本队的人');
+
+    const spyView = await call(`/api/state?token=${player.token}`);
+    assert.equal(spyView.data.state.isSpyBallot, true);
+    assert.equal(spyView.data.state.spies, null, '内鬼也拿不到全员身份');
+    assert.equal(spyView.data.state.voteTargets.length, 5, '内鬼的候选是对方队伍 5 人');
+    assert.ok(
+      spyView.data.state.voteTargets.every((t) => (t.seat <= 5 ? 'A' : 'B') !== myTeam),
+      '内鬼只会看到对面队伍的候选人',
+    );
+
+    const opponentSpy = myTeam === 'A' ? spies.B : spies.A;
+    const guess = await call('/api/action', {
+      token: player.token,
+      action: 'vote',
+      target: opponentSpy,
+    });
+    assert.equal(guess.status, 200, '内鬼可以在对面队伍里猜一个');
+    assert.equal(guess.data.state.myVoteTarget, opponentSpy, '内鬼看得到自己猜的是谁');
+  }
+  const villagerView = await call(`/api/state?token=${villagerPlayers[0].token}`);
+  assert.equal(villagerView.data.state.votesSubmittedCount, 2, '两名内鬼投完后计为 2 票');
+
+  for (const player of villagerPlayers) {
     const team = player.seat <= 5 ? 'A' : 'B';
-    const spy = spies[team];
-    const fallback = team === 'A' ? (spy === 1 ? 2 : 1) : spy === 6 ? 7 : 6;
-    const target = player.seat === spy ? fallback : spy;
-    const res = await call('/api/action', { token: player.token, action: 'vote', target });
+    const res = await call('/api/action', { token: player.token, action: 'vote', target: spies[team] });
     assert.equal(res.status, 200, `座位 ${player.seat} 投票失败`);
   }
 
@@ -170,12 +242,33 @@ test('完整一局：身份只下发本人、队内投票、结算、开新一�
   assert.equal(state.phase, 'result', '全员投完后应自动结算');
   assert.equal(state.outcome.A.verdict, 'villagers');
   assert.equal(state.outcome.B.verdict, 'villagers');
-  assert.equal(state.outcome.A.counts[spies.A], 4);
-  assert.equal(state.outcome.B.counts[spies.B], 4);
-  assert.equal(state.outcome.A.countedVotes, 4, '内鬼的票必须被排除');
-  assert.equal(state.outcome.B.countedVotes, 4);
-  assert.equal(state.outcome.A.detail.find((d) => d.voter === spies.A).counted, false);
+  assert.equal(state.outcome.A.counts[spies.A], 5, 'A 队平民 4 票 + B 队内鬼猜过来 1 票');
+  assert.equal(state.outcome.B.counts[spies.B], 5);
+  assert.equal(state.outcome.A.countedVotes, 5, '每队 5 票：本队平民 4 票 + 对面内鬼 1 票');
+  assert.equal(state.outcome.B.countedVotes, 5);
   assert.deepEqual(state.spies, spies, '结算后才公开内鬼');
+
+  // 内鬼那一票：猜对面队伍的人，并算进对面队伍的票数
+  assert.equal(state.outcome.ballots.length, 10, '十个人的票都要有记录');
+  const spyBallotA = state.outcome.ballots.find((b) => b.voter === spies.A);
+  const spyBallotB = state.outcome.ballots.find((b) => b.voter === spies.B);
+  assert.equal(spyBallotA.bySpy, true);
+  assert.equal(spyBallotA.crossTeam, true);
+  assert.equal(spyBallotA.target, spies.B, 'A 队内鬼猜的是 B 队内鬼');
+  assert.equal(spyBallotA.countsIn, 'B', 'A 队内鬼那一票算进 B 队');
+  assert.equal(spyBallotB.target, spies.A, 'B 队内鬼猜的是 A 队内鬼');
+  assert.equal(spyBallotB.countsIn, 'A', 'B 队内鬼那一票算进 A 队');
+  assert.equal(state.outcome.ballots.filter((b) => b.countsIn === 'A').length, 5, 'A 队共 5 票');
+  assert.equal(state.outcome.ballots.filter((b) => b.countsIn === 'B').length, 5, 'B 队共 5 票');
+
+  // 历史战绩
+  assert.equal(state.history.length, 1, '结算后应写入一条历史战绩');
+  assert.equal(state.history[0].round, 1);
+  assert.equal(state.history[0].A.spy.seat, spies.A);
+  assert.equal(state.history[0].B.spy.seat, spies.B);
+  assert.equal(state.history[0].A.reason, 'caught');
+  assert.equal(state.history[0].B.reason, 'caught', '这一局两队都全员投了内鬼');
+  assert.equal(state.history[0].ballots.length, 10);
 
   const lateVote = await call('/api/action', { token: players[1].token, action: 'vote', target: spies.A });
   assert.equal(lateVote.status, 409, '结算后不能再投票');
@@ -187,6 +280,7 @@ test('完整一局：身份只下发本人、队内投票、结算、开新一�
   assert.equal(nextRound.data.state.spies, null);
   assert.equal(nextRound.data.state.myVoteTarget, null);
   assert.equal(nextRound.data.state.confirmedCount, 0);
+  assert.equal(nextRound.data.state.history.length, 1, '新一轮里历史战绩依然可查');
 });
 
 test('伪造令牌拿不到任何房间状态', async () => {

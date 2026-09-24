@@ -21,6 +21,7 @@ const SEAT_COUNT = 10;
 const TEAM_SIZE = SEAT_COUNT / 2;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_ROOMS = 500;
+const HISTORY_LIMIT = 30;
 
 /** @type {Map<string, object>} */
 const rooms = new Map();
@@ -50,8 +51,9 @@ function drawSpies() {
  * 统计一支队伍的投票结果。
  *
  * 规则：
- *  - 队内投票，只能投本队其他人；
- *  - 内鬼照常投票，但那一票作废（不计入任何人的票数）；
+ *  - 平民只能投本队的人；内鬼不能投本队，改成猜对面队伍的内鬼；
+ *  - 所以一支队伍的票数 = 本队平民的 4 票 + 对面内鬼猜过来的 1 票，共 5 票；
+ *  - 本队内鬼那一票算在对面队伍头上，不计入本队；
  *  - 唯一最高票且正好是内鬼 -> 平民胜出；
  *  - 平票 / 最高票是平民 / 无人投票 -> 内鬼胜出。
  */
@@ -60,14 +62,13 @@ function buildOutcome({ votes, spy, team }) {
   const counts = new Map(seats.map((s) => [s, 0]));
   const detail = [];
 
-  for (const seat of seats) {
-    const raw = votes[seat];
-    if (raw === undefined || raw === null) continue;
-    const target = Number(raw);
-    if (!counts.has(target)) continue; // 跨队票直接忽略（正常流程不会出现）
-    const counted = seat !== spy; // 内鬼的票作废
-    if (counted) counts.set(target, counts.get(target) + 1);
-    detail.push({ voter: seat, target, counted });
+  for (const key of Object.keys(votes)) {
+    const voter = Number(key);
+    const target = Number(votes[key]);
+    if (voter === spy) continue; // 本队内鬼那一票算在对面队伍头上
+    if (!counts.has(target)) continue; // 不是投给本队的，与本队无关
+    counts.set(target, counts.get(target) + 1);
+    detail.push({ voter, target });
   }
 
   let topCount = 0;
@@ -96,7 +97,7 @@ function buildOutcome({ votes, spy, team }) {
     counts: Object.fromEntries(counts),
     topCount,
     leaders,
-    countedVotes: detail.filter((d) => d.counted).length,
+    countedVotes: detail.length,
     detail,
     verdict,
     reason,
@@ -104,10 +105,63 @@ function buildOutcome({ votes, spy, team }) {
 }
 
 function buildRoundOutcome(room) {
+  const spies = room.spies;
+  const ballots = Object.keys(room.votes)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map((voter) => {
+      const target = Number(room.votes[voter]);
+      const bySpy = voter === spies.A || voter === spies.B;
+      const crossTeam = teamOf(voter) !== teamOf(target);
+      return {
+        voter,
+        voterName: nameOfSeat(room, voter),
+        target,
+        targetName: nameOfSeat(room, target),
+        bySpy,
+        crossTeam,
+        // 一票算进哪支队伍，就看它投给了哪支队伍的人
+        countsIn: teamOf(target),
+      };
+    });
+
   return {
     round: room.round,
-    A: buildOutcome({ votes: room.votes, spy: room.spies.A, team: 'A' }),
-    B: buildOutcome({ votes: room.votes, spy: room.spies.B, team: 'B' }),
+    ballots,
+    A: buildOutcome({ votes: room.votes, spy: spies.A, team: 'A' }),
+    B: buildOutcome({ votes: room.votes, spy: spies.B, team: 'B' }),
+  };
+}
+
+function nameOfSeat(room, seat) {
+  const seatNumber = Number(seat);
+  const occupant = room.seats[seatNumber - 1];
+  return occupant ? occupant.name : `${seatNumber} 号（已离开）`;
+}
+
+/**
+ * 把一轮的结果压成历史战绩。名字在这里就固化下来，
+ * 之后有人换座位或者退房，回看历史依然是当时的名字。
+ */
+function archiveRound(room) {
+  const pack = (outcome) => ({
+    team: outcome.team,
+    verdict: outcome.verdict,
+    reason: outcome.reason,
+    topCount: outcome.topCount,
+    countedVotes: outcome.countedVotes,
+    spy: { seat: outcome.spy, name: nameOfSeat(room, outcome.spy) },
+  });
+  return {
+    round: room.round,
+    at: Date.now(),
+    A: pack(room.outcome.A),
+    B: pack(room.outcome.B),
+    ballots: room.outcome.ballots,
+    seats: room.seats.map((occupant, index) => ({
+      seat: index + 1,
+      name: occupant ? occupant.name : null,
+    })),
   };
 }
 
@@ -220,7 +274,10 @@ function startRound(room) {
 
 function finishVoting(room) {
   room.outcome = buildRoundOutcome(room);
-  room.history.push(room.outcome);
+  room.history.push(archiveRound(room));
+  if (room.history.length > HISTORY_LIMIT) {
+    room.history.splice(0, room.history.length - HISTORY_LIMIT);
+  }
   room.phase = 'result';
   touch(room);
 }
@@ -286,8 +343,16 @@ function applyAction(room, seat, action, payload = {}) {
       const target = Number(payload.target);
       if (!Number.isInteger(target)) throw new HttpError(400, '投票目标不合法');
       if (target === seat) throw new HttpError(400, '不能投给自己');
-      if (teamOf(target) !== teamOf(seat)) throw new HttpError(400, '只能投本队的人');
       if (!room.seats[target - 1]) throw new HttpError(400, '该座位现在没有人');
+
+      const iAmSpy = seat === room.spies.A || seat === room.spies.B;
+      if (iAmSpy) {
+        // 内鬼不能投本队，改成在对面 5 人里猜谁是对面的内鬼
+        if (teamOf(target) === teamOf(seat)) throw new HttpError(400, '你是内鬼，只能猜对面队伍的人');
+      } else if (teamOf(target) !== teamOf(seat)) {
+        throw new HttpError(400, '只能投本队的人');
+      }
+
       room.votes[seat] = target;
       if (everyoneVoted(room)) finishVoting(room);
       else touch(room);
@@ -348,6 +413,7 @@ function snapshotFor(room, seat, token) {
   const myTeam = teamOf(seat);
   const revealMyRole = room.phase !== 'lobby' && room.spies;
   const myRole = revealMyRole ? (room.spies[myTeam] === seat ? 'spy' : 'villager') : null;
+  const iAmSpy = Boolean(revealMyRole) && room.spies[myTeam] === seat;
   const showAll = room.phase === 'result';
 
   const seats = [];
@@ -365,11 +431,13 @@ function snapshotFor(room, seat, token) {
     });
   }
 
+  // 平民在自己队里选，内鬼在对面队里猜
+  const targetTeam = iAmSpy ? (myTeam === 'A' ? 'B' : 'A') : myTeam;
   const voteTargets =
     room.phase === 'voting'
-      ? seatsOfTeam(myTeam)
+      ? seatsOfTeam(targetTeam)
           .filter((s) => s !== seat && room.seats[s - 1])
-          .map((s) => ({ seat: s, name: room.seats[s - 1].name }))
+          .map((s) => ({ seat: s, name: room.seats[s - 1].name, team: targetTeam }))
       : [];
 
   return {
@@ -385,8 +453,10 @@ function snapshotFor(room, seat, token) {
     confirmedCount: seats.filter((s) => s.occupied && s.confirmed).length,
     votesSubmittedCount: seats.filter((s) => s.occupied && s.hasVoted).length,
     myRole,
+    isSpyBallot: iAmSpy,
     myVoteTarget: Object.prototype.hasOwnProperty.call(room.votes, seat) ? room.votes[seat] : null,
     voteTargets,
+    history: room.history.slice(-HISTORY_LIMIT),
     // 只有结算之后才公开所有人的身份
     spies: showAll ? room.spies : null,
     outcome: showAll ? room.outcome : null,

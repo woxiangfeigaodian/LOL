@@ -408,10 +408,22 @@ button.seat-pick.taken {
   font-weight: 700;
 }
 
-.spy-line {
-  margin-top: 8px;
-  font-size: 13px;
-  color: var(--muted);
+.conclusion {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.ok-text {
+  color: var(--villager);
+}
+
+.bad-text {
+  color: var(--spy);
 }
 
 .spy-name {
@@ -490,20 +502,157 @@ summary {
   color: var(--muted);
 }
 
-.detail-list {
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
+.spy-note {
+  border-color: #7b2b23;
+  background: linear-gradient(180deg, #2a1210, var(--panel));
+}
+
+.spy-note-title {
+  color: var(--spy);
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.ballots h3 {
+  margin-bottom: 4px;
+}
+
+.ballot-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.ballot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: #0d1729;
   font-size: 13px;
+}
+
+.ballot-row.by-spy {
+  border-color: #7b2b23;
+  background: linear-gradient(90deg, #2a1210, #0d1729 75%);
+}
+
+.ballot-who {
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ballot-row.by-spy .ballot-who {
+  color: var(--spy);
+  font-weight: 700;
+}
+
+.ballot-arrow {
+  color: var(--muted);
+  text-align: center;
+}
+
+.ballot-target {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ballot-flag {
+  text-align: right;
+}
+
+.ballot-tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ballot-tag.ok {
+  border-color: #23694c;
+  color: var(--villager);
+}
+
+.ballot-tag.spy {
+  border-color: #7b2b23;
+  color: var(--spy);
+}
+
+.history {
+  margin-top: 14px;
+}
+
+.spy-guesses {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.hist-body {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.hist-round {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+
+.hist-head {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 6px;
+}
+
+.hist-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
   line-height: 1.9;
 }
 
-.detail-list b {
-  color: var(--text);
+.hist-team {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
 }
 
-.void-tag {
+.hist-team.ta {
+  border-color: #2f4f7f;
+  color: #7fa2dd;
+}
+
+.hist-team.tb {
+  border-color: #7f4f2f;
+  color: #d9a06b;
+}
+
+.hist-verdict {
+  font-weight: 600;
+}
+
+.hist-verdict.win {
+  color: var(--villager);
+}
+
+.hist-verdict.lose {
   color: var(--spy);
 }
 
@@ -595,5 +744,14 @@ summary {
 
   .tally-row {
     grid-template-columns: 78px 1fr 28px;
+  }
+
+  .ballot-row {
+    grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr);
+  }
+
+  .ballot-flag {
+    grid-column: 1 / -1;
+    text-align: left;
   }
 }
