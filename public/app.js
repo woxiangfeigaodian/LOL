@@ -8,8 +8,37 @@ const STORAGE_KEY = 'lol-spy-session-v1';
 const POLL_MS = 1200;
 const IDLE_POLL_MS = 3000;
 
+const MODES = {
+  classic: {
+    label: '经典模式',
+    badge: '5V5 · 双方各一名内鬼',
+    desc: '每队 1 名内鬼。平民投本队，内鬼去对面队伍里猜谁是对面的内鬼。',
+    rules:
+      '规则：1–5 号为 A 队，6–10 号为 B 队，每队各随机一名内鬼。游戏结束后队内投票，每人只能投本队其他人；' +
+      '内鬼不能投本队，改成去对面 5 人里猜谁是对面的内鬼，这一票计入对面队伍的票数。' +
+      '唯一最高票正好是内鬼则平民胜出，平票、投错人或无人投票则内鬼胜出。',
+  },
+  multi: {
+    label: '多内鬼模式',
+    badge: '5V5 · 每队随机 2~5 名内鬼',
+    desc: '两队内鬼数量相同，随机 2~5 名。每人 2 票：平民投本队，内鬼猜对面。',
+    rules:
+      '规则：1–5 号为 A 队，6–10 号为 B 队，每队随机 2–5 名内鬼（两队数量相同）。' +
+      '赛后每人 2 票、一次提交，必须投给两个不同的人：平民两票都投本队，' +
+      '内鬼不能投本队，两票都去猜对面队伍的内鬼（这两票计入对面队伍的票数）。' +
+      '结算公布全部内鬼、票数、票型和票数最高的内鬼，具体惩罚（比如红包）你们自己结算。',
+  },
+};
+
+function modeInfo(mode) {
+  return MODES[mode === 'multi' ? 'multi' : 'classic'];
+}
+
 const ui = {
   tab: 'create',
+  mode: 'classic',
+  picks: [],
+  rulesOpen: false,
   createName: '',
   createSeat: 1,
   joinCode: '',
@@ -136,6 +165,107 @@ function restoreFocus(info) {
 
 /* ----------------------------- 渲染 ----------------------------- */
 
+function rulesHtml(mode) {
+  if (mode === 'multi') {
+    return `
+      <div class="rule-section">
+        <h4>身份</h4>
+        <ul>
+          <li>1–5 号是 A 队，6–10 号是 B 队，一队一边。</li>
+          <li>每队随机 <b>2~5 名内鬼</b>，<b>两队数量相同</b>，每轮重新随机；身份只有本人能看到。</li>
+          <li>约定：内鬼的目标是<b>让自己队伍输掉真实比赛</b>，并尽量不被投出来。</li>
+        </ul>
+      </div>
+      <div class="rule-section">
+        <h4>投票（赛后）</h4>
+        <ul>
+          <li>每人 <b>2 票</b>、一次提交；两票必须投给<b>两个不同的人</b>，不能投自己。</li>
+          <li>平民：两票都投<b>本队</b>的人。</li>
+          <li>内鬼：不能投本队，两票都去<b>对面队伍</b>猜谁是对面的内鬼，<b>票计入对面队伍的票数</b>。</li>
+          <li>全员投完时每队恒为 <b>10 票</b>（本队平民每人 2 票 + 对面内鬼每人 2 票），不随内鬼数量变化。</li>
+          <li>投票过程中不显示任何票数；所有人投完（或房主提前结束）才公布。</li>
+        </ul>
+      </div>
+      <div class="rule-section">
+        <h4>判定</h4>
+        <ul>
+          <li><b>被投出</b> = 该内鬼是<b>本队最高票</b>（可以并列，至少 1 票）。</li>
+          <li>结算页公布全部内鬼、每队票数排行、完整票型和票数最高的内鬼。</li>
+        </ul>
+      </div>
+      <div class="rule-section">
+        <h4>红包结算</h4>
+        <ul>
+          <li>内鬼所在队<b>赢了</b>，或该内鬼<b>被投出</b> → 该内鬼发 <b>5 个红包</b>，总额 = <b>6 − 内鬼数量</b>（2 人 4 元 / 3 人 3 元 / 4 人 2 元 / 5 人 1 元）。</li>
+          <li>领包人 = <b>己方平民 + 对方内鬼</b>，共 5 人，一人一个包。</li>
+          <li>内鬼所在队<b>输了且没被投出</b> → 该内鬼免罚；<b>平民不参与发红包</b>。</li>
+          <li>房主在结算页（投票阶段也可以）点「A 队赢 / B 队赢」，App 自动生成清单；录错了可以点另一边改，也可以「撤回」重录，清单和历史记录会跟着重算。</li>
+        </ul>
+      </div>`;
+  }
+  return `
+    <div class="rule-section">
+      <h4>身份</h4>
+      <ul>
+        <li>1–5 号是 A 队，6–10 号是 B 队，一队一边。</li>
+        <li>每队随机 <b>1 名内鬼</b>，连续当内鬼是允许的；身份只有本人能看到。</li>
+        <li>约定：内鬼的目标是<b>让自己队伍输掉真实比赛</b>，并尽量不被投出来。</li>
+      </ul>
+    </div>
+    <div class="rule-section">
+      <h4>投票（赛后）</h4>
+      <ul>
+        <li>平民：只能投<b>本队</b>的人，不能投自己，每人 1 票。</li>
+        <li>内鬼：不能投本队，改成在<b>对面 5 人</b>里猜谁是对面的内鬼，这一票<b>计入对面队伍的票数</b>。</li>
+        <li>每队票数 = 本队平民 4 票 + 对面内鬼猜过来 1 票 = <b>5 票</b>。</li>
+        <li>投票过程中不显示任何票数；所有人投完（或房主提前结束）才公布。</li>
+      </ul>
+    </div>
+    <div class="rule-section">
+      <h4>判定</h4>
+      <ul>
+        <li>唯一最高票正好是本队内鬼 → 内鬼<b>被投出</b>。</li>
+        <li>平票 / 最高票是平民 / 无人投票 → 内鬼<b>没被投出</b>。</li>
+      </ul>
+    </div>
+    <div class="rule-section">
+      <h4>红包结算（单倍）</h4>
+      <ul>
+        <li>内鬼所在队<b>赢了</b>，或内鬼<b>被投出</b> → 内鬼发 <b>5 个红包（共 5 元）</b>，由<b>己方 4 个平民 + 对方内鬼</b>一人领 1 元。</li>
+        <li>内鬼所在队<b>输了且没被投出</b> → 内鬼免罚；<b>没投中他的己方平民</b>每人给他发 1 元（弃权也算没投中）。</li>
+        <li>房主在结算页（投票阶段也可以）点「A 队赢 / B 队赢」，App 自动生成清单；录错了可以点另一边改，也可以「撤回」重录，清单和历史记录会跟着重算。</li>
+      </ul>
+    </div>`;
+}
+
+/** 当前上下文该显示哪套规则：房间里看房间模式，首页看所选/查到的模式。 */
+function currentRulesMode() {
+  if (snapshot) return snapshot.mode;
+  if (ui.tab === 'join' && ui.joinPreview) return ui.joinPreview.mode;
+  return ui.mode;
+}
+
+function renderModal() {
+  const el = document.getElementById('modal');
+  if (!el) return;
+  if (!ui.rulesOpen) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const mode = currentRulesMode();
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="modal-dialog" data-act="modal-body">
+      <div class="modal-head">
+        <h3>规则 · ${modeInfo(mode).label}</h3>
+        <button class="small ghost" data-act="close-rules">关闭</button>
+      </div>
+      ${rulesHtml(mode)}
+      <p class="muted" style="margin-top:14px">身份和票数只存在服务端，接口只下发你自己的身份，结算前谁也看不到别人的身份和票数。模式在建房时选定，房间内不能更换。</p>
+    </div>`;
+}
+
 function render() {
   const focus = captureFocus();
   let html;
@@ -143,6 +273,7 @@ function render() {
   else if (snapshot) html = renderRoom(snapshot);
   else html = renderHome();
   document.getElementById('app').innerHTML = html;
+  renderModal();
   restoreFocus(focus);
 }
 
@@ -156,9 +287,11 @@ function renderLoading() {
 }
 
 function renderHome() {
+  const previewMode = ui.tab === 'join' ? (ui.joinPreview ? ui.joinPreview.mode : null) : ui.mode;
+  const info = previewMode ? modeInfo(previewMode) : null;
   return `
     <header class="hero">
-      <div class="badge">5V5 · 双方各一名内鬼</div>
+      <div class="badge">${info ? info.badge : '5V5 · 内鬼模式'}</div>
       <h1>内鬼模式</h1>
       <p>开局随机、身份只有自己看得见、赛后队内投票。<br>10 个人各开各的页面，只需要一个房间码。</p>
     </header>
@@ -171,8 +304,7 @@ function renderHome() {
       ${ui.tab === 'create' ? renderCreateForm() : renderJoinForm()}
     </div>
     <p class="muted foot">
-      规则：1–5 号为 A 队，6–10 号为 B 队，每队各随机一名内鬼。游戏结束后队内投票，每人只能投本队其他人；
-      内鬼照常投票，但那一票作废。唯一最高票正好是内鬼则平民胜出，平票或投错人则内鬼胜出。
+      ${info ? info.rules : MODES.classic.rules}
     </p>`;
 }
 
@@ -197,6 +329,13 @@ function emptySeatMap() {
 
 function renderCreateForm() {
   return `
+    <div class="muted" style="margin-bottom:6px">选择模式</div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="${ui.mode === 'classic' ? '' : 'ghost'} grow" data-act="pick-mode" data-mode="classic">经典模式</button>
+      <button class="${ui.mode === 'multi' ? '' : 'ghost'} grow" data-act="pick-mode" data-mode="multi">多内鬼模式</button>
+    </div>
+    <p class="muted" style="margin-bottom:10px">${modeInfo(ui.mode).desc}</p>
+    <button class="small ghost" data-act="rules" style="margin-bottom:16px">查看规则</button>
     <label>你的昵称
       <input id="create-name" maxlength="12" placeholder="例如：老王" value="${esc(ui.createName)}" />
     </label>
@@ -222,11 +361,15 @@ function renderJoinForm() {
     }
     ${
       preview
-        ? `<div class="muted" style="margin-bottom:6px">点一个空座位坐下</div>${seatPicker(
-            preview.seats,
-            ui.joinSeat,
-            'pick-join-seat',
-          )}`
+        ? `<p class="muted" style="margin-bottom:10px">房间模式：<b>${modeInfo(preview.mode).label}</b> — ${modeInfo(
+            preview.mode,
+          ).desc}</p>
+           <button class="small ghost" data-act="rules" style="margin-bottom:12px">查看规则</button>
+           <div class="muted" style="margin-bottom:6px">点一个空座位坐下</div>${seatPicker(
+             preview.seats,
+             ui.joinSeat,
+             'pick-join-seat',
+           )}`
         : '<p class="muted">输入 4 位房间码后会自动查询空位。</p>'
     }
     <label style="margin-top:16px">你的昵称
@@ -244,11 +387,13 @@ function renderTopbar(s) {
         <div class="muted">房间码</div>
         <div class="room-code">${esc(s.code)}</div>
       </div>
+      <button class="small ghost" data-act="rules">规则</button>
       <button class="small ghost" data-act="copy-code">复制房间码</button>
       <button class="small ghost" data-act="copy-link">复制邀请链接</button>
     </div>
     <p class="muted" style="margin-top:10px">
-      你是 ${s.seat} 号 · ${esc(s.name || '')} · ${s.team} 队${s.isHost ? ' · 房主' : ''}
+      <span class="mode-tag ${s.mode === 'multi' ? 'multi' : 'classic'}">${modeInfo(s.mode).label}</span>你是
+      ${s.seat} 号 · ${esc(s.name || '')} · ${s.team} 队${s.isHost ? ' · 房主' : ''}
       ${s.round > 0 ? ` · 第 ${s.round} 轮` : ''}
     </p>`;
 }
@@ -258,6 +403,13 @@ function seatTags(seat) {
   if (seat.confirmed) tags.push('<span class="tag-ok">已确认</span>');
   if (seat.hasVoted) tags.push('<span class="tag-ok">已投票</span>');
   return tags.length ? `<div class="tags">${tags.join('')}</div>` : '';
+}
+
+/** 列出还没完成某个动作（确认身份 / 投票）的人，格式：`3 号 老王`。 */
+function pendingNames(seats, flagKey) {
+  return seats
+    .filter((seat) => seat.occupied && !seat[flagKey])
+    .map((seat) => `${seat.seat} 号${seat.name ? ` ${esc(seat.name)}` : ''}`);
 }
 
 function seatGrid(s, { kickable = false } = {}) {
@@ -284,7 +436,9 @@ function renderLobby(s) {
   return `
     <div class="phase-title">
       <h2>等待开局</h2>
-      <p class="muted">把房间码发给同局的朋友，10 个人到齐后由房主开始。</p>
+      <p class="muted">${
+        s.mode === 'multi' ? '本局每队随机 2~5 名内鬼（两边数量相同），每人 2 票。' : '本局每队各一名内鬼。'
+      }把房间码发给同局的朋友，10 个人到齐后由房主开始。</p>
     </div>
     <div class="card">
       ${seatGrid(s, { kickable: s.isHost })}
@@ -297,7 +451,11 @@ function renderLobby(s) {
              <button class="primary" data-act="start-round" ${
                s.occupiedCount === 10 ? '' : 'disabled'
              }>开始第 1 轮</button>
-             <p class="muted" style="margin-top:10px">点击后每队随机产生一名内鬼，所有人各自查看自己的身份。</p>
+             <p class="muted" style="margin-top:10px">${
+               s.mode === 'multi'
+                 ? '点击后每队随机产生 2~5 名内鬼（两边数量相同），所有人各自查看自己的身份。'
+                 : '点击后每队随机产生一名内鬼，所有人各自查看自己的身份。'
+             }</p>
            </div>`
         : `<div class="status-line"><span class="spinner"></span>等待房主开始本轮</div>`
     }`;
@@ -305,16 +463,20 @@ function renderLobby(s) {
 
 function identityCard(s) {
   const me = s.seats.find((seat) => seat.isMe);
+  const multi = s.mode === 'multi';
   if (ui.revealed && s.myRole) {
     const isSpy = s.myRole === 'spy';
+    const hint = isSpy
+      ? multi
+        ? '你是内鬼。别被队友发现——赛后你的 2 票都要投给对面队伍。'
+        : '你不能投本队，要去对面队伍里猜谁是对面的内鬼，那一票计入对面队伍的票数。别露馅。'
+      : multi
+        ? '本队有 2~5 名内鬼（数量随机）。赛后你有 2 票，从本队里选出 2 个最可疑的人。'
+        : '在你们队里找出那个内鬼。';
     return `
       <div class="identity-card ${isSpy ? 'spy' : 'villager'}">
         <div class="role-word ${isSpy ? 'spy' : 'villager'}">${isSpy ? '你是内鬼' : '你是平民'}</div>
-        <div class="role-hint">${
-          isSpy
-            ? '你不能投本队，要去对面队伍里猜谁是对面的内鬼，那一票计入对面队伍的票数。别露馅。'
-            : '在你们队里找出那个内鬼。'
-        }</div>
+        <div class="role-hint">${hint}</div>
         <button class="small ghost" data-act="hide-role">隐藏身份</button>
       </div>`;
   }
@@ -330,13 +492,18 @@ function renderReveal(s) {
   const me = s.seats.find((seat) => seat.isMe);
   const confirmed = Boolean(me && me.confirmed);
   const pending = s.occupiedCount - s.confirmedCount;
+  const pendingList = pendingNames(s.seats, 'confirmed');
   return `
     <div class="phase-title">
       <h2>第 ${s.round} 轮 · 看身份</h2>
-      <p class="muted">身份只有你自己的屏幕上能看到，看完请点确认。</p>
+      <p class="muted">身份只有你自己的屏幕上能看到，看完请点确认。${
+        s.mode === 'multi' ? '本局每队随机 2~5 名内鬼，每人 2 票。' : ''
+      }</p>
     </div>
     ${identityCard(s)}
-    <div class="status-line">已确认 ${s.confirmedCount}/${s.occupiedCount}${pending > 0 ? ` · 还有 ${pending} 人没确认` : ''}</div>
+    <div class="status-line">已确认 ${s.confirmedCount}/${s.occupiedCount}${
+      pending > 0 ? ` · 还没确认：${pendingList.join('、')}` : ' · 所有人都确认了'
+    }</div>
     <div style="margin-top:12px">
       <button class="primary" data-act="confirm" ${confirmed ? 'disabled' : ''}>
         ${confirmed ? '已确认身份' : '我记住了，确认身份'}
@@ -352,7 +519,7 @@ function renderReveal(s) {
              <p class="muted" style="margin-top:10px">${
                s.confirmedCount >= s.occupiedCount
                  ? '所有人都确认了身份，可以开始投票。'
-                 : `还有 ${pending} 人没确认身份，等他们看完再开始投票。`
+                 : `还有 ${pending} 人没确认身份：${pendingList.join('、')}，等他们看完再开始投票。`
              }</p>
            </div>`
         : `<div class="status-line"><span class="spinner"></span>等待房主开启投票</div>`
@@ -360,13 +527,56 @@ function renderReveal(s) {
 }
 
 function renderVoting(s) {
+  const multi = s.mode === 'multi';
   const targets = s.voteTargets;
-  const voted = s.myVoteTarget != null;
+  const myTargets = multi && Array.isArray(s.myVoteTargets) ? s.myVoteTargets : [];
+  const voted = multi ? myTargets.length > 0 : s.myVoteTarget != null;
   const waiting = s.occupiedCount - s.votesSubmittedCount;
-  const targetName = voted ? s.seats[s.myVoteTarget - 1] : null;
+  const waitingList = pendingNames(s.seats, 'hasVoted');
+  const label = (seat) => {
+    const info = s.seats[seat - 1];
+    return `${seat} 号${info && info.name ? ` ${esc(info.name)}` : ''}`;
+  };
+  const targetName = voted && !multi ? s.seats[s.myVoteTarget - 1] : null;
 
   let ballot;
-  if (s.isSpyBallot) {
+  if (multi) {
+    if (voted) {
+      ballot = `
+      <div class="card${s.isSpyBallot ? ' spy-note' : ''}">
+        <div class="status-line" style="margin-top:0">
+          <span class="spinner"></span>你已提交：<b>${myTargets.map(label).join('、')}</b> · 等待其他人（已投 ${s.votesSubmittedCount}/${s.occupiedCount}）
+        </div>
+        <p class="muted" style="margin-top:10px;text-align:center">两票一起提交，提交后不能修改。</p>
+      </div>`;
+    } else {
+      const picks = ui.picks;
+      ballot = `
+      <div class="card${s.isSpyBallot ? ' spy-note' : ''}">
+        ${
+          s.isSpyBallot
+            ? `<div class="spy-note-title">你是内鬼 · 两票都投对面</div>
+               <p class="muted">两票都投给对面队伍的人（不能重复）。票会计入对面队伍的票数——猜中就是给对面的内鬼加票。</p>`
+            : ''
+        }
+        <div class="muted" style="margin:8px 0 4px">${s.isSpyBallot ? '对面队伍候选人' : '本队候选人'}（选 2 人）</div>
+        <div class="menu">
+          ${targets
+            .map((t) => {
+              const picked = picks.includes(t.seat);
+              return `<button data-act="pick-vote" data-seat="${t.seat}" class="${
+                picked ? 'picked' : ''
+              }">${t.seat} 号 · ${esc(t.name)}${picked ? ' ✓' : ''}</button>`;
+            })
+            .join('')}
+        </div>
+        <div class="status-line">已选 ${picks.length}/2</div>
+        <button class="primary" style="margin-top:10px" data-act="submit-votes" ${
+          picks.length === 2 ? '' : 'disabled'
+        }>提交我的 2 票</button>
+      </div>`;
+    }
+  } else if (s.isSpyBallot) {
     ballot = voted
       ? `
       <div class="card spy-note">
@@ -414,9 +624,13 @@ function renderVoting(s) {
     <div class="phase-title">
       <h2>第 ${s.round} 轮 · ${s.isSpyBallot ? '猜对面内鬼' : '队内投票'}</h2>
       <p class="muted">${
-        s.isSpyBallot
-          ? `你是内鬼，去 ${s.team === 'A' ? 'B' : 'A'} 队的 5 个人里猜谁是对面的内鬼。所有人投完才会公布结果。`
-          : `你是 ${s.team} 队，从本队里投出你认为的内鬼。所有人投完才会公布票数。`
+        multi
+          ? s.isSpyBallot
+            ? `你是内鬼，两票都投给 ${s.team === 'A' ? 'B' : 'A'} 队的两个人（不能重复），票计入对面队伍的票数。所有人投完才会公布结果。`
+            : `你是 ${s.team} 队，从本队里选 2 个最可疑的人（不能重复、不能选自己）。所有人投完才会公布结果。`
+          : s.isSpyBallot
+            ? `你是内鬼，去 ${s.team === 'A' ? 'B' : 'A'} 队的 5 个人里猜谁是对面的内鬼。所有人投完才会公布结果。`
+            : `你是 ${s.team} 队，从本队里投出你认为的内鬼。所有人投完才会公布票数。`
       }</p>
     </div>
     ${ballot}
@@ -434,11 +648,13 @@ function renderVoting(s) {
              <div class="label">房主操作</div>
              <button class="ghost" data-act="end-voting">提前结束投票并结算</button>
              <p class="muted" style="margin-top:10px">${
-               waiting > 0 ? `还有 ${waiting} 人没投票，没投的按弃权处理。` : '所有人都投完了。'
+               waiting > 0
+                 ? `还有 ${waiting} 人没投票：${waitingList.join('、')}，没投的按弃权处理。`
+                 : '所有人都投完了。'
              }</p>
            </div>`
         : waiting > 0
-          ? `<div class="status-line">还剩 ${waiting} 人没投票</div>`
+          ? `<div class="status-line">还没投票：${waitingList.join('、')}</div>`
           : ''
     }`;
 }
@@ -529,6 +745,7 @@ function conclusionText(s, o) {
 }
 
 function renderResult(s) {
+  if (s.mode === 'multi') return renderResultMulti(s);
   return `
     <div class="phase-title">
       <h2>第 ${s.round} 轮 · 结算</h2>
@@ -539,6 +756,166 @@ function renderResult(s) {
       ${renderTeamResult(s, 'B')}
     </div>
     ${renderSpyGuesses(s)}
+    ${renderSettlement(s)}
+    ${
+      s.isHost
+        ? `<div class="host-panel">
+             <div class="label">房主操作</div>
+             <button class="primary" data-act="start-round">开始新一轮（重新随机内鬼）</button>
+             <div style="margin-top:10px">
+               <button class="ghost small" data-act="back-lobby">回到大厅调整座位</button>
+             </div>
+           </div>`
+        : `<div class="status-line"><span class="spinner"></span>等待房主开始新一轮</div>`
+    }`;
+}
+
+/** 房主录比赛结果 + 自动生成的红包清单（单倍结算，两种模式都支持）。 */
+function renderSettlement(s) {
+  const winner = s.matchWinner;
+  const pickButtons = `
+    <div class="row" style="margin-top:10px">
+      <button class="${winner === 'A' ? '' : 'ghost'} grow" data-act="set-winner" data-winner="A">A 队赢</button>
+      <button class="${winner === 'B' ? '' : 'ghost'} grow" data-act="set-winner" data-winner="B">B 队赢</button>
+      ${winner ? '<button class="ghost small" data-act="clear-winner">撤回</button>' : ''}
+    </div>`;
+
+  let body;
+  if (!winner) {
+    body = s.isHost
+      ? `<p class="muted">打完比赛后，点一下哪队赢了，下面就会生成红包清单。</p>${pickButtons}`
+      : '<p class="muted">等待房主录入比赛结果…</p>';
+  } else {
+    body = `${s.settlement ? renderSettlementList(s.settlement) : '<p class="muted">正在计算红包清单…</p>'}
+      <p class="muted" style="margin-top:12px">本局赢家：<b>${winner} 队</b>${
+        s.isHost ? '（点下面可以改，录错了也可以撤回重录）' : ''
+      }</p>
+      ${s.isHost ? pickButtons : ''}`;
+  }
+
+  return `
+    <div class="card settlement-card">
+      <h3>比赛结果 · 红包清单</h3>
+      ${body}
+      <p class="muted" style="margin-top:12px">${
+        s.mode === 'multi'
+          ? '多内鬼模式：每个内鬼发 5 个红包，总额 = 6 − 内鬼数量（5 人 1 元 / 4 人 2 元 / 3 人 3 元 / 2 人 4 元）；平民不用发。'
+          : '按单倍结算，暂不含「被投出双倍」。'
+      }</p>
+    </div>`;
+}
+
+function renderSettlementList(settlement) {
+  return (settlement.entries || [])
+    .map((entry) => {
+      const spy = `${entry.spy.seat} 号 ${esc(entry.spy.name)}`;
+      if (entry.action === 'pay') {
+        const receivers = entry.receivers.map((r) => `${r.seat} 号 ${esc(r.name)}`).join('、');
+        const why = entry.teamWon
+          ? `${entry.team} 队赢了比赛`
+          : `${entry.team} 队输了，但内鬼被投出`;
+        const each = entry.amount / entry.packets;
+        return `<div class="settle-row">
+          <div class="settle-title"><span class="spy-name">${spy}</span> 发 ${entry.packets} 个红包（共 ${entry.amount} 元）</div>
+          <div class="muted">原因：${why}｜每个包 ${each} 元，领包人：${receivers || '（没有可领的人）'}</div>
+        </div>`;
+      }
+      if (entry.action === 'free') {
+        return `<div class="settle-row">
+          <div class="settle-title"><span class="spy-name">${spy}</span> 免罚</div>
+          <div class="muted">原因：${entry.team} 队输了且内鬼没被投出</div>
+        </div>`;
+      }
+      const payers = entry.payers.length
+        ? entry.payers.map((p) => `${p.seat} 号 ${esc(p.name)}`).join('、')
+        : '（没有平民漏投）';
+      return `<div class="settle-row">
+        <div class="settle-title"><span class="spy-name">${spy}</span> 免罚，收 ${entry.amount} 元</div>
+        <div class="muted">原因：${entry.team} 队输了且内鬼没被投出｜没投中他的平民每人给他 1 元：${payers}</div>
+      </div>`;
+    })
+    .join('');
+}
+
+/** 多内鬼模式的单队结算：只公布数据（内鬼名单、票数、票型、票数最高的内鬼）。 */
+function renderTeamResultMulti(s, team) {
+  const o = s.outcome[team];
+  const max = Math.max(o.topCount, 1);
+  const spySet = new Set(o.spies);
+  const topSet = new Set(o.topSpies);
+  const who = (seat) => {
+    const meta = s.seats[seat - 1];
+    return `${seat} 号${meta && meta.name ? ` ${esc(meta.name)}` : ''}`;
+  };
+
+  const rows = Object.keys(o.counts)
+    .map(Number)
+    .sort((a, b) => o.counts[b] - o.counts[a] || a - b)
+    .map((seat) => {
+      const cls = ['tally-row'];
+      if (spySet.has(seat)) cls.push('is-spy');
+      if (topSet.has(seat)) cls.push('is-leader');
+      return `<div class="${cls.join(' ')}">
+        <div class="tally-name">${topSet.has(seat) ? '⭐ ' : ''}${who(seat)}${
+          spySet.has(seat) ? ' 🔪' : ''
+        }</div>
+        <div class="bar"><span style="width:${Math.round((o.counts[seat] / max) * 100)}%"></span></div>
+        <div class="count">${o.counts[seat]}</div>
+      </div>`;
+    })
+    .join('');
+
+  // 每队票数 = 本队平民的票 + 对面内鬼猜过来的票，所以列的是"算进本队"的所有票
+  const ballots = (s.outcome.ballots || []).filter((b) => b.countsIn === team);
+  const voteRows = ballots
+    .map(
+      (b) => `<div class="vote-row${b.bySpy ? ' by-spy' : ''}">
+        <span class="vote-from">${b.voter} 号 ${esc(b.voterName)}${b.bySpy ? ' 🔪' : ''}</span>
+        <span class="vote-arrow">→</span>
+        <span class="vote-to">${b.target} 号 ${esc(b.targetName)}${spySet.has(b.target) ? ' 🔪' : ''}${
+          b.bySpy && spySet.has(b.target) ? ' 🎯' : ''
+        }</span>
+        ${
+          b.bySpy
+            ? `<span class="vote-tag spy">内鬼票 · ${b.voter <= 5 ? 'A' : 'B'} 队猜的</span>`
+            : '<span class="vote-tag ok">平民票</span>'
+        }
+      </div>`,
+    )
+    .join('');
+
+  const topLine = o.topSpies.length
+    ? `票数最高的内鬼：<b class="spy-name">${o.topSpies.map(who).join('、')}</b>（${o.topCount} 票）`
+    : '内鬼一张票都没拿到';
+
+  return `
+    <div class="verdict">
+      <div class="verdict-head">
+        <div class="verdict-title">${team} 队${team === s.team ? '<span class="mine-tag">你的队</span>' : ''}</div>
+        <div class="muted">有效票数 ${o.countedVotes}</div>
+      </div>
+      <div class="conclusion">
+        本队内鬼 ${o.spies.length} 名：<b class="spy-name">${o.spies.map(who).join('、')}</b><br>${topLine}
+      </div>
+      <div class="tally">${rows}</div>
+      <div class="vote-detail">
+        <div class="vote-detail-head">本队得票明细（含对面内鬼猜过来的票）</div>
+        ${voteRows || '<p class="muted">本队一张票都没有</p>'}
+      </div>
+    </div>`;
+}
+
+function renderResultMulti(s) {
+  return `
+    <div class="phase-title">
+      <h2>第 ${s.round} 轮 · 结算</h2>
+      <p class="muted">每队随机 2~5 名内鬼（数量相同），每人 2 票。下面是全部身份、票数和红包清单。</p>
+    </div>
+    <div class="result-columns">
+      ${renderTeamResultMulti(s, 'A')}
+      ${renderTeamResultMulti(s, 'B')}
+    </div>
+    ${renderSettlement(s)}
     ${
       s.isHost
         ? `<div class="host-panel">
@@ -593,17 +970,45 @@ function renderHistory(s) {
     .map((h) => {
       const line = (team) => {
         const o = h[team];
+        if (h.mode === 'multi') {
+          const spies = o.spies.map((sp) => `${sp.seat} 号 ${esc(sp.name)}`).join('、');
+          const top = o.topSpies.length
+            ? `票数最高的内鬼：${o.topSpies
+                .map((sp) => `${sp.seat} 号 ${esc(sp.name)}`)
+                .join('、')}（${o.topCount} 票）`
+            : '内鬼无人得票';
+          const settleEntries = h.settlement ? (h.settlement.entries || []).filter((e) => e.team === team) : [];
+          const paid = settleEntries
+            .filter((e) => e.action === 'pay')
+            .reduce((sum, e) => sum + e.amount, 0);
+          const settleText = settleEntries.length ? (paid > 0 ? `发 ${paid} 元红包` : '全员免罚') : '';
+          return `<div class="hist-line">
+            <span class="hist-team t${team.toLowerCase()}">${team} 队</span>
+            <span>内鬼 <b class="spy-name">${spies}</b></span>
+            <span>${top}</span>
+            <span class="muted">有效 ${o.countedVotes} 票</span>
+            ${settleText ? `<span class="muted">${settleText}</span>` : ''}
+          </div>`;
+        }
         const verdict = VERDICTS[o.reason] || VERDICTS.wrong_person;
         const win = verdict.cls === 'win-villagers';
+        const settle = h.settlement && (h.settlement.entries || []).find((e) => e.team === team);
         return `<div class="hist-line">
           <span class="hist-team t${team.toLowerCase()}">${team} 队</span>
           <span>内鬼 <b class="spy-name">${o.spy.seat} 号 ${esc(o.spy.name)}</b></span>
           <span class="hist-verdict ${win ? 'win' : 'lose'}">${verdict.title}</span>
           <span class="muted">计入 ${o.countedVotes} 票</span>
+          ${
+            settle
+              ? `<span class="muted">${
+                  settle.action === 'pay' ? `发 ${settle.amount} 元红包` : `收 ${settle.amount} 元`
+                }</span>`
+              : ''
+          }
         </div>`;
       };
       return `<div class="hist-round">
-        <div class="hist-head">第 ${h.round} 轮</div>
+        <div class="hist-head">第 ${h.round} 轮${h.matchWinner ? ` · ${h.matchWinner} 队赢` : ''}</div>
         ${line('A')}
         ${line('B')}
       </div>`;
@@ -641,9 +1046,10 @@ function renderRoom(s) {
 function applySnapshot(state) {
   const prev = snapshot;
   snapshot = state;
-  if (!prev || prev.round !== state.round) {
+  if (!prev || prev.round !== state.round || prev.phase !== state.phase) {
     ui.revealed = false;
     ui.detailOpen = false;
+    ui.picks = [];
   }
   render();
 }
@@ -744,7 +1150,7 @@ async function createRoom() {
   try {
     const data = await api('/api/rooms', {
       method: 'POST',
-      body: { name: ui.createName.trim(), seat: ui.createSeat },
+      body: { name: ui.createName.trim(), seat: ui.createSeat, mode: ui.mode },
     });
     saveSession({ token: data.token, code: data.code });
     snapshot = null;
@@ -784,6 +1190,21 @@ document.addEventListener('click', (ev) => {
   switch (action) {
     case 'tab':
       ui.tab = btn.dataset.tab;
+      render();
+      break;
+
+    case 'rules':
+      ui.rulesOpen = true;
+      render();
+      break;
+
+    case 'close-rules':
+      ui.rulesOpen = false;
+      render();
+      break;
+
+    case 'pick-mode':
+      ui.mode = btn.dataset.mode === 'multi' ? 'multi' : 'classic';
       render();
       break;
 
@@ -839,8 +1260,37 @@ document.addEventListener('click', (ev) => {
       if (confirm(`确认投给 ${seat} 号？提交后不能修改。`)) act('vote', { target: seat });
       break;
 
+    case 'pick-vote': {
+      if (ui.picks.includes(seat)) ui.picks = ui.picks.filter((x) => x !== seat);
+      else if (ui.picks.length >= 2) toast('已经选满 2 个人，先点掉一个再选');
+      else ui.picks = ui.picks.concat(seat);
+      render();
+      break;
+    }
+
+    case 'submit-votes': {
+      if (ui.picks.length !== 2) break;
+      const picks = ui.picks.slice();
+      if (confirm(`确认投给 ${picks[0]} 号和 ${picks[1]} 号？两票一起提交，提交后不能修改。`)) {
+        act('vote', { targets: picks }).then((ok) => {
+          if (ok) ui.picks = [];
+        });
+      }
+      break;
+    }
+
     case 'end-voting':
       if (confirm('现在结束投票并按当前票数结算？没投的人按弃权处理。')) act('end_voting');
+      break;
+
+    case 'set-winner':
+      act('set_match_winner', { winner: btn.dataset.winner });
+      break;
+
+    case 'clear-winner':
+      if (confirm('撤回比赛结果？红包清单会一起清掉，之后可以重新录。')) {
+        act('set_match_winner', { winner: null });
+      }
       break;
 
     case 'clear-seat':
@@ -912,6 +1362,13 @@ document.addEventListener('input', (ev) => {
       ui.joinError = '';
     }
     if (changed) lookupRoom(digits);
+  }
+});
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && ui.rulesOpen) {
+    ui.rulesOpen = false;
+    render();
   }
 });
 

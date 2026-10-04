@@ -377,6 +377,12 @@ button.seat-pick.taken {
   margin-top: 8px;
 }
 
+.menu button.picked {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: rgba(200, 170, 110, 0.08);
+}
+
 .verdict {
   border-radius: 14px;
   padding: 16px 18px;
@@ -543,6 +549,27 @@ summary {
   vertical-align: middle;
 }
 
+.mode-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.mode-tag.classic {
+  border-color: #2f4f7f;
+  color: #7fa2dd;
+}
+
+.mode-tag.multi {
+  border-color: #7f4f2f;
+  color: #d9a06b;
+}
+
 .vote-detail {
   margin-top: 14px;
   padding-top: 12px;
@@ -618,6 +645,94 @@ summary {
 
 .spy-guesses-card {
   margin-top: 14px;
+}
+
+.settlement-card h3 {
+  margin-bottom: 6px;
+}
+
+.settle-row {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0d1729;
+}
+
+.settle-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4vh 16px 6vh;
+  background: rgba(4, 8, 16, 0.74);
+  overflow-y: auto;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-dialog {
+  width: min(660px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px 20px 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.modal-head h3 {
+  font-size: 18px;
+}
+
+.rule-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.rule-section h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+}
+
+.rule-section ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.rule-section li {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.rule-section li b {
+  color: var(--gold);
+}
+
+.rule-section li .spy-name {
+  color: var(--spy);
 }
 
 .hist-body {
